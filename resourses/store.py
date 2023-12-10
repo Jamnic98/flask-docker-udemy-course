@@ -1,49 +1,48 @@
 from flask.views import MethodView
 from flask_smorest import Blueprint, abort
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
+from db import db
+from models import StoreModel
 from schemas import StoreSchema
-from db import stores
-from utils import get_unique_id
-
-blp = Blueprint("Stores", __name__, description="Operations on stores")
 
 
-@blp.route("/store")
-class StoreList(MethodView):
-    @staticmethod
-    @blp.response(200, StoreSchema(many=True))
-    def get():
-        return stores.values()
-
-    @staticmethod
-    @blp.arguments(StoreSchema)
-    @blp.response(201, StoreSchema)
-    def post(store_data):
-        # create store with unique id
-        store_id = get_unique_id()
-        store = {
-            "id": store_id,
-            **store_data
-        }
-        # save to db and return
-        stores[store_id] = store
-        return store
+blp = Blueprint("Stores", "stores", description="Operations on stores")
 
 
 @blp.route("/store/<string:store_id>")
 class Store(MethodView):
-    @staticmethod
     @blp.response(200, StoreSchema)
-    def get(store_id):
-        try:
-            return stores[store_id]
-        except KeyError:
-            abort(404, message=F"Store with id: {store_id} not found")
+    def get(self, store_id):
+        store = StoreModel.query.get_or_404(store_id)
+        return store
 
-    @staticmethod
-    def delete(store_id):
+    def delete(self, store_id):
+        store = StoreModel.query.get_or_404(store_id)
+        db.session.delete(store)
+        db.session.commit()
+        return {"message": "Store deleted"}, 200
+
+
+@blp.route("/store")
+class StoreList(MethodView):
+    @blp.response(200, StoreSchema(many=True))
+    def get(self):
+        return StoreModel.query.all()
+
+    @blp.arguments(StoreSchema)
+    @blp.response(201, StoreSchema)
+    def post(self, store_data):
+        store = StoreModel(**store_data)
         try:
-            del stores[store_id]
-            return {"message": "Item deleted."}
-        except KeyError:
-            abort(404, f'Store with id: {store_id} not found')
+            db.session.add(store)
+            db.session.commit()
+        except IntegrityError:
+            abort(
+                400,
+                message="A store with that name already exists.",
+            )
+        except SQLAlchemyError:
+            abort(500, message="An error occurred creating the store.")
+
+        return store
